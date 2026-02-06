@@ -1,0 +1,21 @@
+# --- Obsidian ---
+.obsidian/
+
+# Optional: if you use Obsidian plugins that create these
+.trash/
+.DS_Store
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Optional: if you DON'T want attachments in git ---
+# attachments/
+# Assets/
+# *.png
+# *.jpg
+# *.jpeg
+# *.gif
+# *.webp
+# *.svg
+# *.pdf
