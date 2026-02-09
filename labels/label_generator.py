@@ -8,6 +8,28 @@ from typing import Optional, Sequence, Union
 
 
 # ----------------------------
+# Text normalization for labels
+# ----------------------------
+
+FRACTION_SLASH = "⁄"  # U+2044
+
+_fraction_pattern = re.compile(r"(?<!\d)(\d+)\s*/\s*(\d+)(?!\d)")
+
+def normalize_label_text(text: str) -> str:
+    """
+    Replace any occurrence of 'a/b' (with optional spaces) with 'a ⁄ b'
+    using the Unicode fraction slash and spaces.
+
+    Examples:
+      "5/16"      -> "5 ⁄ 16"
+      "5 / 16"    -> "5 ⁄ 16"
+      'x 5/16"'   -> 'x 5 ⁄ 16"'   (quotes preserved; no special handling)
+      "ID 5/16 OD 1/2" -> "ID 5 ⁄ 16 OD 1 ⁄ 2"
+    """
+    return _fraction_pattern.sub(rf"\1 {FRACTION_SLASH} \2", str(text))
+
+
+# ----------------------------
 # Helpers
 # ----------------------------
 
@@ -96,13 +118,13 @@ class BoltSpec:
 @dataclass(frozen=True)
 class NutSpec:
     size: str
-    extra: str = ""                  # second row (nylon/acorn/split/etc.)
+    extra: str = ""                  # second row text
 
 
 @dataclass(frozen=True)
 class WasherSpec:
     size: str
-    extra: str = ""                  # second row (dims)
+    extra: str = ""                  # second row text
     lock: bool = False               # lockwasher vs washer
 
 
@@ -114,7 +136,7 @@ class WasherSpec:
 class Bolts:
     bolt_type: str                   # e.g. "socket_hex"
     size: str                        # "M3" or "#4-40"
-    lengths: Sequence[str]           # ["8","10"] or ['0.375/"', ...]
+    lengths: Sequence[str]           # ["8","10"] or ['5/16"', ...]
     tapping: bool = False
     partial_thread: bool = False
     grade_or_material: Optional[str] = None
@@ -123,13 +145,13 @@ class Bolts:
 @dataclass(frozen=True)
 class Nuts:
     size: str
-    extras: Sequence[str] = ("",)    # multiple nut variants: ["", "NYLON", "ACORN", "SPLIT"]
+    extras: Sequence[str] = ("",)    # multiple nut variants
 
 
 @dataclass(frozen=True)
 class Washers:
     size: str
-    extras: Sequence[str] = ("",)    # multiple washer variants: ["", "ID5 OD10 T1.0", ...]
+    extras: Sequence[str] = ("",)    # multiple washer variants (dims, notes, etc.)
     lock: bool = False
 
 
@@ -141,24 +163,6 @@ BatchItem = Union[Bolts, Nuts, Washers]
 # ----------------------------
 
 class CullenectLayout:
-    """
-    Matches your ideal commands, but WITHOUT shell quotes:
-
-      Bolt label spec:
-        {cullbolt(flipped,socket,hex)}{1|1}M3\\n×8
-      Optional flags:
-        {cullbolt(flipped,tapping,partial,socket,hex)}...
-
-      Nut label spec:
-        {<}{nut}{1|2}M5\\nNYLON
-
-      Washer label spec:
-        {<}{washer}{1|2}M5\\n...
-
-      Lockwasher label spec:
-        {<}{lockwasher}{1|2}M5\\n...
-    """
-
     base = "cullenect"
 
     def bolt_label(self, b: BoltSpec) -> str:
@@ -172,18 +176,23 @@ class CullenectLayout:
         args += [b.head_style, b.drive]
         icon = "{cullbolt(" + ",".join(args) + ")}"
 
-        top = b.size
+        top = normalize_label_text(b.size)
         if b.grade_or_material:
-            top = f"{top} {b.grade_or_material}"
+            top = normalize_label_text(f"{top} {b.grade_or_material}")
 
-        return f"{icon}{{1|1}}{top}\n×{b.length}"
+        length_text = normalize_label_text(b.length)
+        return f"{icon}{{1|1}}{top}\n×{length_text}"
 
     def nut_label(self, n: NutSpec) -> str:
-        return f"{{<}}{{nut}}{{1|2}}{n.size}\n{n.extra}"
+        size = normalize_label_text(n.size)
+        extra = normalize_label_text(n.extra)
+        return f"{{<}}{{nut}}{{1|2}}{size}\n{extra}"
 
     def washer_label(self, w: WasherSpec) -> str:
         icon = "{lockwasher}" if w.lock else "{washer}"
-        return f"{{<}}{icon}{{1|2}}{w.size}\n{w.extra}"
+        size = normalize_label_text(w.size)
+        extra = normalize_label_text(w.extra)
+        return f"{{<}}{icon}{{1|2}}{size}\n{extra}"
 
     def bolt_filename(self, b: BoltSpec, ext: str = ".step") -> str:
         # "#4-40" -> "4_40"
@@ -203,20 +212,20 @@ class CullenectLayout:
         if b.partial_thread:
             stem += "_partial"
         if b.grade_or_material:
-            stem += f"_{b.grade_or_material.lower()}"
+            stem += f"_{str(b.grade_or_material).lower()}"
 
         return _safe_stem(stem) + ext
 
     def nut_filename(self, n: NutSpec, ext: str = ".step") -> str:
         stem = f"{n.size.lower().replace('#','')}_nut"
         if n.extra:
-            stem += f"_{n.extra.lower()}"
+            stem += f"_{str(n.extra).lower()}"
         return _safe_stem(stem) + ext
 
     def washer_filename(self, w: WasherSpec, ext: str = ".step") -> str:
         stem = f"{w.size.lower().replace('#','')}_{'lockwasher' if w.lock else 'washer'}"
         if w.extra:
-            stem += f"_{w.extra.lower()}"
+            stem += f"_{str(w.extra).lower()}"
         return _safe_stem(stem) + ext
 
 
@@ -230,6 +239,7 @@ BOLT_TYPES = {
     "pan_torx":      dict(head_style="pan", drive="torx"),
     "csk_hex":       dict(head_style="countersunk", drive="hex"),
     "csk_torx":      dict(head_style="countersunk", drive="torx"),
+    "csk_phillips":  dict(head_style="countersunk", drive="phillips"),
 }
 
 
@@ -329,13 +339,11 @@ if __name__ == "__main__":
         Bolts("socket_hex", "M3", lengths=["16"], partial_thread=True),
         Bolts("socket_hex", "M3", lengths=["20"], partial_thread=True, tapping=True),
 
-        Bolts("pan_phillips", "#4-40", lengths=['0.375', '0.5']),
+        Bolts("pan_phillips", "#4-40", lengths=['5/16"', '3/8"', '1/2"']),
 
-        # Multiple nut variants in a single line:
         Nuts("M5", extras=["", "NYLON", "ACORN", "SPLIT"]),
 
-        # Multiple washer variants too:
-        Washers("M5", extras=["", "id5 od10 t1.0", "id5 od12 t1.5"]),
+        Washers("M5", extras=["", "id 5/16 od 1/2 t 1/16"]),
         Washers("M5", lock=True, extras=[""]),
     ])
 
